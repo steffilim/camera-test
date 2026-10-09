@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Camera feature test</title>
+<style>
+:root{--bg:#f6f5f2;--fg:#1c1c1a;--mut:#6b6a66;--card:#fff;--line:#d9d7d0;--ok:#16794a;--bad:#b3261e;--btn:#1c1c1a;--btnfg:#fff;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141413;--fg:#efeee9;--mut:#9c9a93;--card:#1e1e1c;--line:#34332f;--ok:#5bd394;--bad:#ff8a80;--btn:#efeee9;--btnfg:#141413}}
+:root[data-theme="dark"]{--bg:#141413;--fg:#efeee9;--mut:#9c9a93;--card:#1e1e1c;--line:#34332f;--ok:#5bd394;--bad:#ff8a80;--btn:#efeee9;--btnfg:#141413}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:1.25rem;margin:0 0 4px}
+p{margin:6px 0;color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+button{font:inherit;font-weight:600;background:var(--btn);color:var(--btnfg);border:0;border-radius:8px;padding:11px 14px;min-height:44px}
+button.alt{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:focus-visible{outline:3px solid #3b82f6;outline-offset:2px}
+video{width:100%;aspect-ratio:3/4;max-height:55vh;object-fit:cover;background:#000;border-radius:10px;display:block}
+pre{white-space:pre-wrap;word-break:break-word;margin:0;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+h2{font-size:1rem;margin:0 0 6px}
+video.mirror{transform:scaleX(-1)}
+#flash{position:fixed;inset:0;background:#fff;display:none;z-index:99}
+.shots{display:flex;gap:8px}.shots figure{margin:0;flex:1}.shots img{width:100%;border-radius:8px;display:block;background:var(--line);min-height:60px}
+figcaption{font-size:13px;color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<h1>Camera feature test</h1>
+<p>Checks whether this phone's browser can use flash (torch) and 0.5x in a web page. Nothing is saved or uploaded.</p>
+
+<div class="card">
+<h2>Steps</h2>
+<p>1. Tap Open back camera and allow access. 2. Read the Detected box. 3. Tap Test flash, then 0.5x, 1x and 2x. 4. Screenshot this whole page and send it to Claude.</p>
+<div class="row">
+<button id="back">Open back camera</button>
+<button id="front" class="alt">Open front camera</button>
+</div>
+</div>
+
+<video id="v" playsinline muted autoplay></video>
+
+<div class="row">
+<button id="torch" class="alt">Test flash</button>
+<button id="z05" class="alt">0.5x</button>
+<button id="z1" class="alt">1x</button>
+<button id="z2" class="alt">2x</button>
+<button id="fflash" class="alt">Front flash: OFF</button>
+<button id="snap">Take photo</button>
+</div>
+
+<div id="flash"></div>
+<div class="card"><h2>Last photo</h2><div class="shots"><figure><img id="p1" alt=""><figcaption>As captured (not flipped)</figcaption></figure><figure><img id="p2" alt=""><figcaption>Flipped like the Camera app</figcaption></figure></div><pre id="pinfo">No photo yet.</pre></div>
+<div class="card"><h2>Back lenses found</h2><div id="lenses" class="row"><p>Open the camera first.</p></div></div>
+<div class="card"><h2>Detected</h2><pre id="info">No camera open yet.</pre></div>
+<div class="card"><h2>Results log</h2><pre id="log"></pre>
+<div class="row"><button id="copy" class="alt">Copy results</button></div></div>
+</main>
+
+<script>
+(function(){
+var $=function(id){return document.getElementById(id)};
+var stream=null,track=null,torchOn=false,devices=[],front=false,fflash=false;
+function log(m,ok){
+  var d=document.createElement('div');
+  d.textContent=(ok===true?'PASS  ':ok===false?'FAIL  ':'      ')+m;
+  if(ok===true)d.className='ok';if(ok===false)d.className='bad';
+  $('log').appendChild(d);
+}
+log('Page '+(window.isSecureContext?'is':'is NOT')+' a secure context. '+(navigator.platform||'')+' | '+navigator.userAgent.slice(0,110));
+if(window.top!==window.self)log('Page is running inside a frame. If camera is blocked, open the link in your phone browser directly.');
+function stop(){if(stream)stream.getTracks().forEach(function(t){t.stop()});stream=null;track=null;torchOn=false}
+function caps(){try{return track&&track.getCapabilities?track.getCapabilities():{}}catch(e){return {}}}
+function report(){
+  var c=caps(),s=track.getSettings?track.getSettings():{};
+  var lines=[];
+  lines.push('Camera label: '+(track.label||'(none)'));
+  lines.push('Resolution: '+(s.width||'?')+' x '+(s.height||'?'));
+  lines.push('Facing: '+(s.facingMode||'unknown'));
+  lines.push('Flash (torch) reported: '+('torch' in c?'YES':'NO'));
+  lines.push('Zoom reported: '+(c.zoom?('YES, range '+c.zoom.min+' to '+c.zoom.max):'NO'));
+  lines.push('Current zoom: '+(s.zoom!==undefined?s.zoom:'n/a'));
+  $('info').textContent=lines.join('\n');
+}
+async function lenses(){
+  try{
+    devices=(await navigator.mediaDevices.enumerateDevices()).filter(function(d){return d.kind==='videoinput'});
+  }catch(e){log('Could not list cameras: '+e.name,false);return}
+  var box=$('lenses');box.innerHTML='';
+  if(!devices.length){box.innerHTML='<p>None listed.</p>';return}
+  devices.forEach(function(d,i){
+    var b=document.createElement('button');b.className='alt';
+    b.textContent=d.label||('Camera '+(i+1));
+    b.onclick=function(){openCam({deviceId:{exact:d.deviceId}},'lens "'+(d.label||i)+'"')};
+    box.appendChild(b);
+  });
+  log('Cameras listed: '+devices.map(function(d){return d.label||'(no label)'}).join(' | '));
+}
+async function openCam(video,what){
+  stop();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:video,audio:false});
+  }catch(e){log('Open '+what+': '+e.name+' - '+e.message,false);return false}
+  track=stream.getVideoTracks()[0];
+  var st0=track.getSettings?track.getSettings():{};
+  front=(st0.facingMode==='user')||/front/i.test(track.label||'');
+  $('v').classList.toggle('mirror',front);
+  var v=$('v');v.srcObject=stream;try{await v.play()}catch(e){}
+  log('Opened '+what+': '+(track.label||'camera'),true);
+  report();await lenses();return true;
+}
+$('back').onclick=function(){openCam({facingMode:{ideal:'environment'},width:{ideal:2048},height:{ideal:1536}},'back camera')};
+$('front').onclick=function(){openCam({facingMode:'user',width:{ideal:2048},height:{ideal:1536}},'front camera')};
+
+$('torch').onclick=async function(){
+  if(!track){log('Open a camera first.');return}
+  var c=caps();
+  if(!('torch' in c)){log('Flash: browser does not report torch on this camera.',false);return}
+  try{
+    torchOn=!torchOn;
+    await track.applyConstraints({advanced:[{torch:torchOn}]});
+    log('Flash '+(torchOn?'ON':'OFF')+' accepted. Check if the light actually turned on.',true);
+  }catch(e){torchOn=false;log('Flash: '+e.name+' - '+e.message,false)}
+};
+
+async function zoomTo(x){
+  if(!track){log('Open a camera first.');return}
+  var c=caps(),s=track.getSettings?track.getSettings():{};
+  if(c.zoom&&x>=c.zoom.min&&x<=c.zoom.max){
+    try{
+      await track.applyConstraints({advanced:[{zoom:x}]});
+      var n=track.getSettings();
+      log(x+'x via zoom: accepted, camera now reports zoom '+(n.zoom!==undefined?n.zoom:'n/a')+'. Check the picture changed.',true);report();return;
+    }catch(e){log(x+'x via zoom: '+e.name+' - '+e.message,false)}
+  }else if(c.zoom){
+    log(x+'x is outside the reported zoom range '+c.zoom.min+' to '+c.zoom.max+'.');
+  }else{
+    log(x+'x: no zoom control reported on this camera.');
+  }
+  if(x<1){
+    var ultra=devices.filter(function(d){return /ultra|0\.5/i.test(d.label)})[0];
+    if(ultra){
+      log('Trying the ultra-wide lens listed as "'+ultra.label+'".');
+      var ok=await openCam({deviceId:{exact:ultra.deviceId}},'ultra-wide lens');
+      log('0.5x via separate lens: '+(ok?'camera opened, check the picture is wider.':'could not open'),ok);
+    }else{
+      log('0.5x: no ultra-wide lens found in the camera list.',false);
+    }
+  }
+}
+$('z05').onclick=function(){zoomTo(0.5)};
+$('z1').onclick=function(){zoomTo(1)};
+$('z2').onclick=function(){zoomTo(2)};
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+$('fflash').onclick=function(){fflash=!fflash;$('fflash').textContent='Front flash: '+(fflash?'ON':'OFF')};
+$('snap').onclick=async function(){
+  if(!track){log('Open a camera first.');return}
+  var useScreen=front&&fflash,fl=$('flash');
+  if(useScreen){fl.style.display='block';await sleep(1500)}
+  var v=$('v'),w=v.videoWidth,h=v.videoHeight;
+  if(!w){fl.style.display='none';log('Photo: no video frame yet.',false);return}
+  var sc=Math.min(1,2048/Math.max(w,h)),cw=Math.round(w*sc),ch=Math.round(h*sc);
+  var c=document.createElement('canvas');c.width=cw;c.height=ch;c.getContext('2d').drawImage(v,0,0,cw,ch);
+  var m=document.createElement('canvas');m.width=cw;m.height=ch;
+  var mx=m.getContext('2d');mx.translate(cw,0);mx.scale(-1,1);mx.drawImage(v,0,0,cw,ch);
+  if(useScreen){await sleep(500);fl.style.display='none'}
+  c.toBlob(function(b){
+    $('p1').src=URL.createObjectURL(b);
+    var t='Stream '+w+' x '+h+' -> saved '+cw+' x '+ch+', '+Math.round(b.size/1024)+' KB JPEG. Screen flash: '+(useScreen?'used (white 2s, shot at 1.5s)':'off');
+    $('pinfo').textContent=t;log('Photo taken. '+t,true);
+  },'image/jpeg',0.9);
+  m.toBlob(function(b){$('p2').src=URL.createObjectURL(b)},'image/jpeg',0.9);
+};
+$('copy').onclick=async function(){
+  try{await navigator.clipboard.writeText($('info').textContent+'\n\n'+$('log').innerText);log('Results copied.')}
+  catch(e){log('Copy blocked. Screenshot the page instead.')}
+};
+})();
+</script>
+</body>
+</html>
